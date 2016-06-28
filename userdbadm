@@ -1,0 +1,175 @@
+#!/usr/bin/perl -w
+
+#   Copyright (C) 2013 Tobias Leupold <tobias.leupold@web.de>
+#
+#   userdbadm - create/edit (PAM) userdb files with crypted passwords
+#
+#   This program is free software; you can redistribute it and/or
+#   modify it under the terms of the GNU General Public License
+#   as published by the Free Software Foundation in version 2
+#   of the License.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License along
+#   with this program; if not, write to the Free Software Foundation, Inc.,
+#   59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
+
+use strict;
+use DB_File;
+
+sub usage
+{
+
+	print "\n";
+	print "userdbadm - create/edit (PAM) userdb files with crypted passwords\n";
+	print "\n";
+	print "Usage: $0 <userdb> <command> [user]\n";
+	print "    <userdb> is the database file to query\n";
+	print "    <command> can be:\n";
+	print "        list         Show all users\n";
+	print "        add  <user>  Add <user> to the database\n";
+	print "        edit <user>  Change password for <user>\n";
+	print "        del  <user>  Remove <user> from the database\n";
+	print "\n";
+
+	exit;
+
+}
+
+sub getPass
+{
+
+	print "Enter password: ";
+	system('/bin/stty', '-echo');
+	my $pass = <>;
+	chomp $pass;
+	
+	system('/bin/stty', 'echo');
+	print "\nEnter it again: ";
+	system('/bin/stty', '-echo');
+	$_ = <>;
+	chomp;
+	
+	system('/bin/stty', 'echo');
+	print "\n";
+	
+	if($pass ne $_) {
+		print "The passwords did not match!\n";
+		exit;
+	}
+	
+	return $pass;
+
+}
+
+sub cryptPass
+{
+	
+	my $pass = shift;
+	
+	# Generate a salt
+	my @chars = ('.', '/', 0..9, 'A'..'Z', 'a'..'z');
+	my $salt = (@chars)[rand @chars] . (@chars)[rand @chars];
+
+	# Crypt the password
+	return crypt($pass, $salt);
+
+}
+
+# Get command line arguments
+
+my %config;
+
+usage() if $#ARGV == -1;
+$config{'dbfile'} = shift @ARGV;
+usage() if $#ARGV == -1;
+$config{'action'} = shift @ARGV;
+
+if($config{'action'} eq 'add' or $config{'action'} eq 'edit' or $config{'action'} eq 'del') {
+	usage() if $#ARGV == -1;
+	$config{'user'} = shift @ARGV;
+}
+elsif($config{'action'} ne 'list') {
+	usage();
+}
+
+# Set default access rights or get them if the file already exists
+my $mode = 420;
+$mode = (stat($config{'dbfile'}))[2] & 07777 if -e $config{'dbfile'};
+
+# Open or create the database
+tie my %db, 'DB_File', $config{'dbfile'}, O_RDWR|O_CREAT, $mode, $DB_HASH;
+
+# Print a list of all users in the database
+
+if($config{'action'} eq 'list') {
+	
+	foreach my $user (keys %db) {
+		print "$user\n";
+	}
+	
+	exit;
+	
+}
+
+# Add a user to the database
+
+if($config{'action'} eq 'add') {
+
+	# Check if the user already exists
+	if($db{$config{'user'}}) {
+		print "User \"$config{'user'}\" already exists\n";
+		exit;
+	}
+	
+	# Get a password ...
+	my $pass = getPass();
+	# ... and add the user to the database
+	$db{$config{'user'}} = cryptPass($pass);
+	
+	print "Added user \"$config{'user'}\"\n";
+
+}
+
+# Change a user's password
+
+if($config{'action'} eq 'edit') {
+
+	# Check if the user exists
+	if(!$db{$config{'user'}}) {
+		print "User \"$config{'user'}\" does not exist\n";
+		exit;
+	}
+	
+	# Get a password ...
+	my $pass = getPass();
+	# ... and add the user to the database
+	$db{$config{'user'}} = cryptPass($pass);
+	
+	print "Updated password for user \"$config{'user'}\"\n";
+
+}
+
+# Remove a user from the database
+
+if($config{'action'} eq 'del') {
+
+	# Check if the user exists
+	if(!$db{$config{'user'}}) {
+		print "User \"$config{'user'}\" does not exist\n";
+		exit;
+	}
+	
+	# Remove the user
+	delete $db{$config{'user'}};
+	
+	print "Removed user \"$config{'user'}\"\n";
+
+}
+
+# Close the database
+untie %db;
